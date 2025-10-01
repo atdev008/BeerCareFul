@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+
+<style>
+  .container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+  }
+
+  #reader {
+    width: 100%;            /* กว้างเต็มพื้นที่ที่มี */
+    max-width: 400px;       /* ไม่เกิน 400px */
+    aspect-ratio: 4 / 3;    /* รักษาอัตราส่วน 4:3 */
+    margin: 0 auto;
+  }
+</style>
+</head>
+<body>
+
+<div class="container mt-4">
+    <h1 class="mb-3 text-center">สแกน QR Code สำหรับส่งสินค้าเข้าคลัง</h1>
+
+    <div id="reader"></div>
+    <button id="startScan" class="btn btn-primary mb-3">เปิดกล้อง</button>
+
+<table id="dataTable" class="table table-bordered">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>รหัสสินค้า</th>
+      <th>วันที่</th>
+      <th>full</th>
+      <th>fullscan</th>
+      <th>QTY</th>
+      <th>edit</th>
+    </tr>
+  </thead>
+  <tbody id="dataRows"></tbody>
+</table>
+
+
+    <button id="sendData" class="btn btn-success">ส่งข้อมูล</button>
+  </div>
+
+
+  </div>
+
+ <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<script>
+  let scannedData = [];
+  let html5QrCode;
+
+document.getElementById("startScan").addEventListener("click", () => {
+  html5QrCode = new Html5Qrcode("reader");
+  html5QrCode.start(
+    { facingMode: "environment" },
+    { 
+      fps: 10,
+      qrbox: function(viewfinderWidth, viewfinderHeight) {
+        // ใช้ขนาดเล็กสุดของหน้าจอ (width/height) * 0.8
+        let minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        let qrboxSize = Math.floor(minEdge * 0.8);
+        return { width: qrboxSize, height: qrboxSize };
+      }
+    },
+    onScanSuccess
+  ).catch(err => {
+    Swal.fire("เกิดข้อผิดพลาด", err, "error");
+  });
+});
+
+function onScanSuccess(decodedText) {
+  let lines = decodedText.trim().split(/\r?\n/);
+
+    // fullText = ข้อมูลที่สแกนได้ทั้งหมด
+  let fullTextscan = decodedText.trim();
+
+  // product = บรรทัดแรก
+  let productCode = lines[0] ? lines[0].trim() : "";
+
+  // full text = บรรทัดสุดท้าย
+  let fullText = lines[lines.length - 1] ? lines[lines.length - 1].trim() : "";
+
+  let dateCode = "";
+  if (fullText.includes("/")) {
+    let parts = fullText.split("/");
+    let afterSlash = parts[parts.length - 1];
+
+    // ตรวจสอบว่ามี "-" หลังจาก "/" ไหม
+    if (afterSlash.includes("-")) {
+      // ฟอร์แมทที่ 2 → ดึงตัวเลข 6 หลักแรกก่อน "-"
+      dateCode = afterSlash.split("-")[0].slice(0, 6);
+    } else {
+      // ฟอร์แมทที่ 1 → ดึง 6 หลักสุดท้าย
+      dateCode = afterSlash.slice(-6);
+    }
+  }
+
+  let newEntry = { 
+    product: productCode, 
+    date: dateCode, 
+    fullTextscan1: fullTextscan, 
+    full: fullText // เก็บข้อมูลเต็มทั้งก้อน
+  };
+
+  // กันข้อมูลซ้ำ
+  if (!scannedData.some(e => e.product === newEntry.product && e.date === newEntry.date && e.full === newEntry.full)) {
+    scannedData.push(newEntry);
+    updateTable();
+  }
+
+  html5QrCode.stop().then(() => {
+    Swal.fire("สแกนสำเร็จ", decodedText, "success");
+  }).catch(err => {
+    Swal.fire("ปิดกล้องไม่สำเร็จ", err, "error");
+  });
+}
+
+function updateTable() {
+  const tbody = document.getElementById("dataRows");
+  tbody.innerHTML = "";
+  scannedData.forEach((data, index) => {
+    const row = `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${data.product || "-"}</td>
+        <td>${data.date || "-"}</td>
+        <td style="white-space: pre-line">${data.full || "-"}</td>
+        <td>${data.fullTextscan1 || "-"}</td>
+        <td>
+          <input type="number" min="1" value="${data.qty || 1}" 
+                 onchange="updateQty(${index}, this.value)" 
+                 class="form-control form-control-sm" style="width:80px">
+        </td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="deleteRow(${index})">ลบ</button>
+        </td>
+      </tr>`;
+    tbody.innerHTML += row;
+  });
+}
+
+// ฟังก์ชันอัปเดตจำนวน
+function updateQty(index, value) {
+  scannedData[index].qty = parseInt(value) || 1;
+}
+
+// ฟังก์ชันลบแถว
+function deleteRow(index) {
+  scannedData.splice(index, 1);
+  updateTable();
+}
+
+
+  document.getElementById("sendData").addEventListener("click", () => {
+    fetch("save_qr.php", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ qrData: scannedData })
+    })
+    .then(response => response.text())
+    .then(data => {
+      Swal.fire("ส่งข้อมูลเรียบร้อย", data, "success");
+    })
+    .catch(error => {
+      Swal.fire("เกิดข้อผิดพลาด", error, "error");
+    });
+  });
+</script>
+
+
+</body>
+</html>
